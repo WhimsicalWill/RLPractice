@@ -54,6 +54,7 @@ class RolloutBuffer:
 
 class PPO:
     def __init__(self, env):
+        self.env = env
         self.action_dim = env.action_space.n
         self.state_dim = env.observation_space.shape[0]
 
@@ -65,7 +66,7 @@ class PPO:
         self.samples_per_policy = self.max_ep_length * 4
         self.max_time_steps = 400000
         self.num_epochs = 80
-        self.hidden_size = 16
+        self.hidden_size = 64
         self.render = True
 
         self.data = RolloutBuffer()
@@ -101,7 +102,7 @@ class PPO:
 
                 if self.render:
                     env.render()
-                    time.sleep(0.01)
+                    # time.sleep(0.01)
 
                 # add data
                 self.data.rewards.append(reward)
@@ -128,9 +129,9 @@ class PPO:
 
         # these data must be added as tensors
         self.data.states.append(state)
-        self.data.actions.append(action)
-        self.data.log_probs.append(dist.log_prob(action))
-        return action.item()
+        self.data.actions.append(action.detach())
+        self.data.log_probs.append(dist.log_prob(action).detach())
+        return action.detach().item()
 
     def update(self):
         # compute rewards to go
@@ -156,20 +157,20 @@ class PPO:
         # evaluate a new policy at the old transitions and take a opt step using gradient of loss
 
         for i in range(self.num_epochs):
-            log_probs, state_values = self.evaluate(old_states, old_actions)
+            log_probs, state_values, dist_entropy = self.evaluate(old_states, old_actions)
 
             ratios = torch.exp(log_probs - old_log_probs)
 
             # advantages
-            state_values = torch.squeeze(state_values)
+            state_values = torch.squeeze(state_values).detach()
             advantages = rewards - state_values
 
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-self.eps, 1+self.eps) * advantages
 
             if i == 40:
-                print(torch.min(surr1, surr2).mean(), self.MseLoss(rewards, state_values))
-            loss = -1 * torch.min(surr1, surr2) + 0.5 * self.MseLoss(rewards, state_values)
+                print(torch.min(surr1, surr2).mean().item(), self.MseLoss(rewards, state_values).item(), dist_entropy)
+            loss = -1 * torch.min(surr1, surr2) + 0.05 * self.MseLoss(rewards, state_values) - 0.01 * dist_entropy
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
@@ -187,10 +188,16 @@ class PPO:
         dist = Categorical(action_probs)
         action_logprobs = dist.log_prob(action)
         state_values = self.critic(state)
-        return action_logprobs, state_values
+        return action_logprobs, state_values, dist.entropy()
+
+    def unquantize_action(self, action):
+        # given action, map to value in (low, high) interval
+        delta = self.env.action_space.high - self.env.action_space.low
+        return self.env.action_space.low + (delta * action) / self.num_actions
 
 if __name__ == "__main__":
-    env = gym.make("MountainCar-v0").env
+    # for continuous action space, either discretize it or change algo
+    env = gym.make("CartPole-v1").env
 
     ppo = PPO(env)
     ppo.train()
