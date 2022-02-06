@@ -50,3 +50,11 @@ class Critic(nn.Module):
         x = self.fc3(F.relu(x))
         return x
 
+# define soft update with parameter tau
+def soft_update(model, model_target, tau):
+	for target_param, param in zip(model_target.parameters(), model.parameters()):
+		target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
+		
+# define hard update to directly copy parameters
+def hard_update(model, model_target):
+	soft_update(model, model_target, 1.0)
