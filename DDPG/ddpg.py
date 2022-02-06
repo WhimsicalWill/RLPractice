@@ -30,9 +30,9 @@ def train(env):
 	
 	h_dim = 16
 	actor = Actor(obs_dim, act_dim, h_dim)
-	critic = Critic(obs_dim, h_dim)
+	critic = Critic(obs_dim, act_dim, h_dim)
 	actor_target = Actor(obs_dim, act_dim, h_dim)
-	critic_target = Critic(obs_dim, h_dim)
+	critic_target = Critic(obs_dim, act_dim, h_dim)
 	
 	# copy initial weights to target models
 	hard_update(critic, critic_target)
@@ -47,46 +47,78 @@ def train(env):
 	
 	value_criterion = nn.MSELoss()
 	
+	def ddpg_update(buffer):
+		# sample a batch from the replay buffer
+		state, action, reward, next_state = buffer.sample(batch_size)
+		# print("DDPG Update")
+
+		state = torch.FloatTensor(state)
+		action = torch.FloatTensor(action)
+		next_state = torch.FloatTensor(next_state)
+		reward = torch.FloatTensor(reward)
+
+		# freeze the target q networks weights for backprop
+		# is this even necessary if we only compute gradients for actor/critic
+		next_action = actor_target(next_state) # compute with target
+
+		# we detach the next_action, because the only parameters we wish to update are the critic's
+		target_value = reward + gamma * critic_target(next_state, next_action.detach()) # compute with target
+		value = critic(state, action)
+		q_loss = value_criterion(value, target_value)
+
+		pi_loss = critic(state, actor(state))
+		pi_loss = -pi_loss.mean() # optim defaults to gradient descent; transform to negative scalar
+
+		critic_optimizer.zero_grad()
+		q_loss.backward()
+		critic_optimizer.step()
+
+		actor_optimizer.zero_grad()
+		pi_loss.backward()
+		actor_optimizer.step()
+
+		# do soft updates on the target actor and critic models
+		soft_update(actor, actor_target, tau) # copy a fraction of actor weights into actor_target
+		soft_update(critic, critic_target, tau) # copy a fraction of critic weights into critic_target
+
+		return q_loss, pi_loss # return the losses in case we want to track our losses
+
 	steps = 0
 	while steps < num_epochs * steps_per_epoch:
 		# reset stuff before next episode
 		time_step = env.reset()
-		state = time_step.observation
+		state = obs_to_tensor(time_step.observation)
 		
-		for _ in range(max_steps):
+		for step in range(max_steps):
 			#action = actor(state)
 			action = np.random.uniform(act_min, act_max)
 			time_step = env.step(action)
-			
-			# TODO: create wrapper for state to tensor; sample actions from actor
-			buffer.push(state, action, time_step.reward, time_step.observation)
+			next_state = obs_to_tensor(time_step.observation)
+
+			# TODO: push a done boolean if we are at the last step in the episode
+			# Actually, every trajectory that we have will be complete
+			buffer.push(state, action, time_step.reward, next_state)
 			if len(buffer) > batch_size: # update if we have enough samples
-				ddpg_update(buffer)
+				losses = ddpg_update(buffer)
 			
-			state = time_step.observation
+			state = next_state
 			steps += 1
 			
 			if steps % steps_per_epoch == 0:
 				epoch_num = steps // steps_per_epoch
 				print(f"Epoch number {epoch_num}")
+				print(losses)
+def obs_to_tensor(observation):
+	obs_tensor = []
+	for array in observation.values():
+		obs_tensor.append(torch.as_tensor(array))
+	return torch.cat(obs_tensor, dim=-1) # horizontal stack (column wise)
 	
 def get_obs_shape(obs_spec):
 	result_dim = 0
 	for value in obs_spec.values():
 		result_dim += value.shape[0]
 	return result_dim	
-	
-def ddpg_update(buffer):
-	# sample a batch from the replay buffer
-	state, action, reward, next_state = buffer.sample(batch_size)
-	# convert to FloatTensor
-	# state = torch.FloatTensor(state)
-	# next_state = torch.FloatTensor(next_state)
-	# action = torch.FloatTensor(action)
-	# reward = torch.FloatTensor(reward)
-	
-	# take a step to maximum using gradient ascent
-	
 
 if __name__ == '__main__':
     print("Training DDPG with default hyperparameters")
