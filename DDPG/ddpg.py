@@ -62,7 +62,7 @@ def train(env):
 		next_action = actor_target(next_state) # compute with target
 
 		# we detach the next_action, because the only parameters we wish to update are the critic's
-		target_value = reward + gamma * critic_target(next_state, next_action.detach()) # compute with target
+		target_value = torch.unsqueeze(reward, dim=-1) + gamma * critic_target(next_state, next_action.detach()) # compute with target
 		value = critic(state, action)
 		q_loss = value_criterion(value, target_value)
 
@@ -95,8 +95,6 @@ def train(env):
 			time_step = env.step(action)
 			next_state = obs_to_tensor(time_step.observation)
 
-			# TODO: push a done boolean if we are at the last step in the episode
-			# Actually, every trajectory that we have will be complete
 			buffer.push(state, action, time_step.reward, next_state)
 			if len(buffer) > batch_size: # update if we have enough samples
 				losses = ddpg_update(buffer)
@@ -108,19 +106,29 @@ def train(env):
 				epoch_num = steps // steps_per_epoch
 				print(f"Epoch number {epoch_num}")
 				print(losses)
+
 def obs_to_tensor(observation):
 	obs_tensor = []
 	for array in observation.values():
-		obs_tensor.append(torch.as_tensor(array))
+		obs_component = torch.as_tensor(array).float() # uses 32 bit float precision
+		# unsqueeze scalars into 1 by 1 tensors
+		if len(obs_component.shape) == 0:
+			obs_component = torch.unsqueeze(obs_component, 0)
+		obs_tensor.append(obs_component) # append a component of the obs to the final tensor
 	return torch.cat(obs_tensor, dim=-1) # horizontal stack (column wise)
 	
 def get_obs_shape(obs_spec):
 	result_dim = 0
+	# print(obs_spec)
 	for value in obs_spec.values():
-		result_dim += value.shape[0]
+		if len(value.shape) == 0:
+			result_dim += 1
+		else:
+			result_dim += value.shape[0]
+	print(result_dim)
 	return result_dim	
 
 if __name__ == '__main__':
     print("Training DDPG with default hyperparameters")
-    env = suite.load("cheetah", "run")
+    env = suite.load("walker", "walk")
     train(env)
