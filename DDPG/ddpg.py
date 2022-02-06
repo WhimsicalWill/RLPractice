@@ -1,5 +1,6 @@
 from util import Actor, Critic, ReplayBuffer
 from util import hard_update, soft_update
+from recorder import Recorder
 import numpy as np
 from dm_control import suite
 import torch.optim as optim
@@ -16,8 +17,8 @@ tau = 0.01
 batch_size = 8
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 10
-max_steps = 100
+num_epochs = 50
+max_steps = 200 # max_steps per episode is half the number of steps in an epoch (arbitrary)
 
 # main training loop for DDPG
 # TODO: sample env and record trajectories
@@ -42,6 +43,8 @@ def train(env):
 	actor_optimizer = optim.Adam(actor.parameters(), lr=pi_lr)
 	
 	buffer = ReplayBuffer(capacity)	
+	recorder = Recorder(env)
+	recorder.clear_directory()
 	
 	act_min, act_max = act_spec.minimum, act_spec.maximum
 	
@@ -84,14 +87,20 @@ def train(env):
 		return q_loss, pi_loss # return the losses in case we want to track our losses
 
 	steps = 0
+	render = False
 	while steps < num_epochs * steps_per_epoch:
 		# reset stuff before next episode
 		time_step = env.reset()
 		state = obs_to_tensor(time_step.observation)
+
+		if steps + max_steps >= num_epochs * steps_per_epoch: # redner the last episode
+			print("Rendering the following episode")
+			render = True
 		
 		for step in range(max_steps):
-			#action = actor(state)
-			action = np.random.uniform(act_min, act_max)
+			action = actor(state).detach()
+			#action = torch.tensor(np.random.uniform(-1, 1, act_dim))
+			action = denormalize_actions(action, act_min, act_max)
 			time_step = env.step(action)
 			next_state = obs_to_tensor(time_step.observation)
 
@@ -99,6 +108,9 @@ def train(env):
 			if len(buffer) > batch_size: # update if we have enough samples
 				losses = ddpg_update(buffer)
 			
+			if render: # render the env and save
+				recorder.save_frame();
+
 			state = next_state
 			steps += 1
 			
@@ -106,6 +118,16 @@ def train(env):
 				epoch_num = steps // steps_per_epoch
 				print(f"Epoch number {epoch_num}")
 				print(losses)
+
+	print("training complete; rendering video of policy from frames...")
+	recorder.render_video()
+
+def denormalize_actions(action, act_min, act_max):
+	# shift the range of action from [-1, 1] to [act_min, act_max]
+	act_min = torch.tensor(act_min)
+	act_max = torch.tensor(act_max)
+	result = act_min + ((action + 1) / 2.0) * (act_max - act_min)
+	return result.numpy() # cast from torch tensor to nparray for dm_control
 
 def obs_to_tensor(observation):
 	obs_tensor = []
@@ -119,13 +141,11 @@ def obs_to_tensor(observation):
 	
 def get_obs_shape(obs_spec):
 	result_dim = 0
-	# print(obs_spec)
 	for value in obs_spec.values():
 		if len(value.shape) == 0:
 			result_dim += 1
 		else:
 			result_dim += value.shape[0]
-	print(result_dim)
 	return result_dim	
 
 if __name__ == '__main__':
