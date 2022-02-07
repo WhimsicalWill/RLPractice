@@ -1,4 +1,4 @@
-from util import Actor, Critic, ReplayBuffer
+from util import Actor, Critic, ReplayBuffer, OUNoise
 from util import hard_update, soft_update
 from recorder import Recorder
 import numpy as np
@@ -7,6 +7,7 @@ import torch.optim as optim
 import torch.nn as nn
 import torch
 from torch.distributions import Normal
+import matplotlib.pyplot as plt
 
 # hyperparameters for DDPG implementation
 pi_lr = 1e-3
@@ -18,7 +19,7 @@ batch_size = 8
 # steps_per_update = 20
 steps_per_epoch = 1000
 num_epochs = 50
-max_steps = 200 # max_steps per episode is half the number of steps in an epoch (arbitrary)
+max_steps = 500 # max_steps per episode is half the number of steps in an epoch (arbitrary)
 
 # main training loop for DDPG
 # TODO: sample env and record trajectories
@@ -43,6 +44,7 @@ def train(env):
 	actor_optimizer = optim.Adam(actor.parameters(), lr=pi_lr)
 	
 	buffer = ReplayBuffer(capacity)	
+	noise = OUNoise(act_spec)
 	recorder = Recorder(env)
 	recorder.clear_directory()
 	
@@ -88,6 +90,7 @@ def train(env):
 
 	steps = 0
 	render = False
+	avg_ep_rewards = []
 	while steps < num_epochs * steps_per_epoch:
 		# reset stuff before next episode
 		time_step = env.reset()
@@ -97,12 +100,15 @@ def train(env):
 			print("Rendering the following episode")
 			render = True
 		
+		episode_reward = []
 		for step in range(max_steps):
 			action = actor(state).detach()
 			#action = torch.tensor(np.random.uniform(-1, 1, act_dim))
 			action = denormalize_actions(action, act_min, act_max)
+			action = noise.get_action(action, steps) # inject OU noise (decaying over time)
 			time_step = env.step(action)
 			next_state = obs_to_tensor(time_step.observation)
+			episode_reward.append(time_step.reward)
 
 			buffer.push(state, action, time_step.reward, next_state)
 			if len(buffer) > batch_size: # update if we have enough samples
@@ -116,10 +122,15 @@ def train(env):
 			
 			if steps % steps_per_epoch == 0:
 				epoch_num = steps // steps_per_epoch
+
 				print(f"Epoch number {epoch_num}")
 				print(losses)
-
+		avg_ep_rewards.append(sum(episode_reward)/len(episode_reward))
 	print("training complete; rendering video of policy from frames...")
+	fig, axs = plt.subplots(2, 1)
+	axs[0].plot(np.arange(len(episode_reward)), episode_reward)
+	axs[1].plot(np.arange(len(avg_ep_rewards)),avg_ep_rewards)
+	plt.show()
 	recorder.render_video()
 
 def denormalize_actions(action, act_min, act_max):
@@ -150,5 +161,5 @@ def get_obs_shape(obs_spec):
 
 if __name__ == '__main__':
     print("Training DDPG with default hyperparameters")
-    env = suite.load("walker", "walk")
+    env = suite.load("pendulum", "swingup")
     train(env)
