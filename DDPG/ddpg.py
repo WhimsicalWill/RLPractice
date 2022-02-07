@@ -12,17 +12,17 @@ import matplotlib.pyplot as plt
 # hyperparameters for DDPG implementation
 pi_lr = 1e-3
 q_lr = 1e-4 # critic lr is smaller, so receives 10x smaller changes per step
-capacity = 10000
+capacity = 1000
 gamma = 0.99
 tau = 0.01
-batch_size = 8
+batch_size = 64
+h_dim = 64
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 50
+num_epochs = 200
 max_steps = 500 # max_steps per episode is half the number of steps in an epoch (arbitrary)
 
 # main training loop for DDPG
-# TODO: sample env and record trajectories
 def train(env):
 	act_spec = env.action_spec() # action_spec is a BoundedArray with shape field
 	obs_spec = env.observation_spec() # obs_spec is a dict type
@@ -30,7 +30,6 @@ def train(env):
 	obs_dim = get_obs_shape(obs_spec) # get obs space from dm
 	act_dim = act_spec.shape[0] # get action dim from dm
 	
-	h_dim = 16
 	actor = Actor(obs_dim, act_dim, h_dim)
 	critic = Critic(obs_dim, act_dim, h_dim)
 	actor_target = Actor(obs_dim, act_dim, h_dim)
@@ -63,13 +62,12 @@ def train(env):
 		reward = torch.FloatTensor(reward)
 
 		# freeze the target q networks weights for backprop
-		# is this even necessary if we only compute gradients for actor/critic
 		next_action = actor_target(next_state) # compute with target
 
 		# we detach the next_action, because the only parameters we wish to update are the critic's
 		target_value = torch.unsqueeze(reward, dim=-1) + gamma * critic_target(next_state, next_action.detach()) # compute with target
 		value = critic(state, action)
-		q_loss = value_criterion(value, target_value)
+		q_loss = value_criterion(value, target_value.detach()) # detach from computation graph
 
 		pi_loss = critic(state, actor(state))
 		pi_loss = -pi_loss.mean() # optim defaults to gradient descent; transform to negative scalar
@@ -103,7 +101,8 @@ def train(env):
 		episode_reward = []
 		for step in range(max_steps):
 			action = actor(state).detach()
-			#action = torch.tensor(np.random.uniform(-1, 1, act_dim))
+			# TODO: collect actions and visualize distribution over time
+
 			action = denormalize_actions(action, act_min, act_max)
 			action = noise.get_action(action, steps) # inject OU noise (decaying over time)
 			time_step = env.step(action)
@@ -130,6 +129,7 @@ def train(env):
 	fig, axs = plt.subplots(2, 1)
 	axs[0].plot(np.arange(len(episode_reward)), episode_reward)
 	axs[1].plot(np.arange(len(avg_ep_rewards)),avg_ep_rewards)
+	plt.savefig("rewards.png")
 	plt.show()
 	recorder.render_video()
 
@@ -161,5 +161,5 @@ def get_obs_shape(obs_spec):
 
 if __name__ == '__main__':
     print("Training DDPG with default hyperparameters")
-    env = suite.load("pendulum", "swingup")
+    env = suite.load("cartpole", "balance")
     train(env)
