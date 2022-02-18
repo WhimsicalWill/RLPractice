@@ -84,10 +84,11 @@ class OUNoise:
 
     def get_action(self, action, t=0):
         ou_state = self.evolve_state()
+		# with default params, sigma never changes
         self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1.0, t / self.decay_period)
         return np.clip(action + ou_state, self.low, self.high)
 
-# define soft update with parameter tau
+# define soft update with parameter tau; copy model params into model_target
 def soft_update(model, model_target, tau):
 	for target_param, param in zip(model_target.parameters(), model.parameters()):
 		target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
