@@ -21,7 +21,7 @@ class Recorder():
         # hv stack two different camera views to an image 
         img = Image.fromarray(image_data, 'RGB')
         img.save("./frames/frame-%.10d.png" % self.frame_count)
-        self.counter += 1
+        self.frame_count += 1
 
     def save_rewards(self, rewards):
         # create matplotlib diagram for reward in epoch and save
