@@ -19,7 +19,7 @@ batch_size = 64
 h_dim = 64
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 300
+num_epochs = 30
 max_steps = 250 
 
 # main training loop for DDPG
@@ -132,6 +132,7 @@ def train(env):
 				print(f"Epoch number {epoch_num}")
 				print(losses)
 		avg_ep_rewards.append(sum(episode_reward)/len(episode_reward))
+		recorder.save_rewards(episode_reward)
 	print("training complete; rendering video of policy from frames...")
 	fig, axs = plt.subplots(2, 2)
 	axs[0][0].plot(np.arange(len(episode_reward)), episode_reward)
