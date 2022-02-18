@@ -19,8 +19,8 @@ batch_size = 64
 h_dim = 64
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 200
-max_steps = 500 # max_steps per episode is half the number of steps in an epoch (arbitrary)
+num_epochs = 300
+max_steps = 250 
 
 # main training loop for DDPG
 def train(env):
@@ -29,6 +29,8 @@ def train(env):
 	
 	obs_dim = get_obs_shape(obs_spec) # get obs space from dm
 	act_dim = act_spec.shape[0] # get action dim from dm
+
+	print(f"Learning in env with obs_dim: {obs_dim} & act_dim: {act_dim}")
 	
 	actor = Actor(obs_dim, act_dim, h_dim)
 	critic = Critic(obs_dim, act_dim, h_dim)
@@ -61,13 +63,15 @@ def train(env):
 		next_state = torch.FloatTensor(next_state)
 		reward = torch.FloatTensor(reward)
 
-		# freeze the target q networks weights for backprop
-		next_action = actor_target(next_state) # compute with target
+		with torch.no_grad():
+			# freeze the target q networks weights for backprop
+			next_action = actor_target(next_state) # compute with target
 
-		# we detach the next_action, because the only parameters we wish to update are the critic's
-		target_value = torch.unsqueeze(reward, dim=-1) + gamma * critic_target(next_state, next_action.detach()) # compute with target
+			# we detach the next_action, because the only parameters we wish to update are the critic's
+			target_value = torch.unsqueeze(reward, dim=-1) + gamma * critic_target(next_state, next_action.detach()) # compute with target
+		
 		value = critic(state, action)
-		q_loss = value_criterion(value, target_value.detach()) # detach from computation graph
+		q_loss = value_criterion(value, target_value) # detach from computation graph
 
 		pi_loss = critic(state, actor(state))
 		pi_loss = -pi_loss.mean() # optim defaults to gradient descent; transform to negative scalar
@@ -84,18 +88,19 @@ def train(env):
 		soft_update(actor, actor_target, tau) # copy a fraction of actor weights into actor_target
 		soft_update(critic, critic_target, tau) # copy a fraction of critic weights into critic_target
 
-		return q_loss, pi_loss # return the losses in case we want to track our losses
+		return q_loss.item(), pi_loss.item() # return the losses in case we want to track our losses
 
 	steps = 0
-	render = False
-	avg_ep_rewards = []
+	eval, render = False, False # change to true when testing learned policy
+	avg_ep_rewards, q_losses, pi_losses = [], [], []
 	while steps < num_epochs * steps_per_epoch:
 		# reset stuff before next episode
 		time_step = env.reset()
 		state = obs_to_tensor(time_step.observation)
 
-		if steps + max_steps >= num_epochs * steps_per_epoch: # redner the last episode
+		if steps + max_steps >= num_epochs * steps_per_epoch: # render the last ep; remove noise
 			print("Rendering the following episode")
+			eval = True
 			render = True
 		
 		episode_reward = []
@@ -104,7 +109,8 @@ def train(env):
 			# TODO: collect actions and visualize distribution over time
 
 			action = denormalize_actions(action, act_min, act_max)
-			action = noise.get_action(action, steps) # inject OU noise (decaying over time)
+			if not eval: 
+				action = noise.get_action(action, steps) # inject OU noise (decaying over time)
 			time_step = env.step(action)
 			next_state = obs_to_tensor(time_step.observation)
 			episode_reward.append(time_step.reward)
@@ -112,6 +118,8 @@ def train(env):
 			buffer.push(state, action, time_step.reward, next_state)
 			if len(buffer) > batch_size: # update if we have enough samples
 				losses = ddpg_update(buffer)
+				q_losses.append(losses[0])
+				pi_losses.append(losses[1]);
 			
 			if render: # render the env and save
 				recorder.save_frame();
@@ -121,16 +129,18 @@ def train(env):
 			
 			if steps % steps_per_epoch == 0:
 				epoch_num = steps // steps_per_epoch
-
 				print(f"Epoch number {epoch_num}")
 				print(losses)
 		avg_ep_rewards.append(sum(episode_reward)/len(episode_reward))
 	print("training complete; rendering video of policy from frames...")
-	fig, axs = plt.subplots(2, 1)
-	axs[0].plot(np.arange(len(episode_reward)), episode_reward)
-	axs[1].plot(np.arange(len(avg_ep_rewards)),avg_ep_rewards)
-	plt.savefig("rewards.png")
+	fig, axs = plt.subplots(2, 2)
+	axs[0][0].plot(np.arange(len(episode_reward)), episode_reward)
+	axs[0][1].plot(np.arange(len(avg_ep_rewards)),avg_ep_rewards)
+	axs[1][0].plot(np.arange(len(q_losses)), q_losses)
+	axs[1][1].plot(np.arange(len(pi_losses)), pi_losses)
+	plt.savefig("training.png")
 	plt.show()
+	# torch.save()
 	recorder.render_video()
 
 def denormalize_actions(action, act_min, act_max):
@@ -161,5 +171,5 @@ def get_obs_shape(obs_spec):
 
 if __name__ == '__main__':
     print("Training DDPG with default hyperparameters")
-    env = suite.load("cartpole", "balance")
+    env = suite.load("cartpole", "swingup")
     train(env)
