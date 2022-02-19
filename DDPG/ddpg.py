@@ -15,11 +15,11 @@ q_lr = 1e-4 # critic lr is smaller, so receives 10x smaller changes per step
 capacity = 1000
 gamma = 0.99
 tau = 0.01
-batch_size = 16
-h_dim = 16
+batch_size = 64
+h_dim = 64
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 40
+num_epochs = 4
 max_steps = 250 
 
 # main training loop for DDPG
@@ -107,7 +107,7 @@ def train(env):
 		for step in range(max_steps): # start a new episode
 			action = actor(state).detach()
 			action = denormalize_actions(action, act_min, act_max)
-			if not eval: 
+			if not eval: #TODO: decrease noise over time
 				action = noise.get_action(action, steps) # inject OU noise (decaying over time)
 			time_step = env.step(action)
 			next_state = obs_to_tensor(time_step.observation)
@@ -138,8 +138,8 @@ def train(env):
 	axs[1][0].plot(np.arange(len(q_losses)), q_losses)
 	axs[1][1].plot(np.arange(len(pi_losses)), pi_losses)
 	plt.savefig("training.png")
-	#plt.show()
-	# torch.save()
+	torch.save(actor.state_dict(), "./saved_models/actor.pt")
+	torch.save(critic.state_dict(), "./saved_models/critic.pt")
 	recorder.render_video()
 
 def denormalize_actions(action, act_min, act_max):
