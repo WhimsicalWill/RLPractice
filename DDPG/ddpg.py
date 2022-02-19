@@ -15,11 +15,11 @@ q_lr = 1e-4 # critic lr is smaller, so receives 10x smaller changes per step
 capacity = 1000
 gamma = 0.99
 tau = 0.01
-batch_size = 64
-h_dim = 64
+batch_size = 16
+h_dim = 16
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 30
+num_epochs = 40
 max_steps = 250 
 
 # main training loop for DDPG
@@ -56,22 +56,21 @@ def train(env):
 	def ddpg_update(buffer):
 		# sample a batch from the replay buffer
 		state, action, reward, next_state = buffer.sample(batch_size)
-		# print("DDPG Update")
 
 		state = torch.FloatTensor(state)
 		action = torch.FloatTensor(action)
 		next_state = torch.FloatTensor(next_state)
-		reward = torch.FloatTensor(reward)
+		reward = torch.FloatTensor(reward).unsqueeze(-1)
 
 		with torch.no_grad():
-			# freeze the target q networks weights for backprop
 			next_action = actor_target(next_state) # compute with target
 
 			# we detach the next_action, because the only parameters we wish to update are the critic's
-			target_value = torch.unsqueeze(reward, dim=-1) + gamma * critic_target(next_state, next_action.detach()) # compute with target
+			target_value = critic_target(next_state, next_action) # compute with target critic
+			expected_value = reward + gamma * target_value #TODO: add done information
 		
 		value = critic(state, action)
-		q_loss = value_criterion(value, target_value) # detach from computation graph
+		q_loss = value_criterion(value, expected_value) # detach from computation graph
 
 		pi_loss = critic(state, actor(state))
 		pi_loss = -pi_loss.mean() # optim defaults to gradient descent; transform to negative scalar
@@ -91,11 +90,12 @@ def train(env):
 		return q_loss.item(), pi_loss.item() # return the losses in case we want to track our losses
 
 	steps = 0
-	eval, render = False, False # change to true when testing learned policy
+	eval, render = False, False # change render and eval to true when testing learned policy
 	avg_ep_rewards, q_losses, pi_losses = [], [], []
-	while steps < num_epochs * steps_per_epoch:
+	while steps < num_epochs * steps_per_epoch: 
 		# reset stuff before next episode
 		time_step = env.reset()
+		noise.reset() # reset the ou noise object each episode
 		state = obs_to_tensor(time_step.observation)
 
 		if steps + max_steps >= num_epochs * steps_per_epoch: # render the last ep; remove noise
@@ -104,10 +104,8 @@ def train(env):
 			render = True
 		
 		episode_reward = []
-		for step in range(max_steps):
+		for step in range(max_steps): # start a new episode
 			action = actor(state).detach()
-			# TODO: collect actions and visualize distribution over time
-
 			action = denormalize_actions(action, act_min, act_max)
 			if not eval: 
 				action = noise.get_action(action, steps) # inject OU noise (decaying over time)
@@ -130,7 +128,7 @@ def train(env):
 			if steps % steps_per_epoch == 0:
 				epoch_num = steps // steps_per_epoch
 				print(f"Epoch number {epoch_num}")
-				print(losses)
+				print(f"q_loss: {sum(q_losses[-10:])/10}, pi_loss: {sum(pi_losses[-10:])/10}")
 		avg_ep_rewards.append(sum(episode_reward)/len(episode_reward))
 		recorder.save_rewards(episode_reward)
 	print("training complete; rendering video of policy from frames...")
@@ -140,7 +138,7 @@ def train(env):
 	axs[1][0].plot(np.arange(len(q_losses)), q_losses)
 	axs[1][1].plot(np.arange(len(pi_losses)), pi_losses)
 	plt.savefig("training.png")
-	plt.show()
+	#plt.show()
 	# torch.save()
 	recorder.render_video()
 
