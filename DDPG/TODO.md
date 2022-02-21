@@ -1,0 +1,1 @@
+Print out the rewards every timestep to make sure they are being represented correctly. The observed q values should be near the average observed value from the environment, so make sure this lines up (are we getting positive or negative reward)
