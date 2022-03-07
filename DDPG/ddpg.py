@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch
 from torch.distributions import Normal
 import matplotlib.pyplot as plt
+import time
 
 # hyperparameters for DDPG implementation
 pi_lr = 1e-3
@@ -19,7 +20,7 @@ batch_size = 64
 h_dim = 64
 # steps_per_update = 20
 steps_per_epoch = 1000
-num_epochs = 4
+num_epochs = 200
 max_steps = 250 
 
 # main training loop for DDPG
@@ -72,7 +73,7 @@ def train(env):
 			target_value = critic_target(next_state, next_action) # compute with target critic
 			expected_value = reward + gamma * target_value #TODO: add done information
 		
-		print(f"Q avg: {torch.mean(target_value)}") # the mean taken over (batch size) examples
+		#print(f"Q avg: {torch.mean(target_value)}") # the mean taken over (batch size) examples
 		value = critic(state, action)
 		q_loss = value_criterion(value, expected_value) # detach from computation graph
 
@@ -107,9 +108,11 @@ def train(env):
 			eval = True
 			render = True
 		
-		episode_reward = []
+		episode_reward, action_list = [], []
 		for step in range(max_steps): # start a new episode
 			action = actor(state).detach()
+			action_list.append(action)
+			print(action)
 			action = denormalize_actions(action, act_min, act_max)
 			if not eval: #TODO: decrease noise over time
 				action = noise.get_action(action, steps) # inject OU noise (decaying over time)
@@ -133,11 +136,18 @@ def train(env):
 				epoch_num = steps // steps_per_epoch
 				print(f"Epoch number {epoch_num}")
 				print(f"q_loss: {sum(q_losses[-10:])/10}, pi_loss: {sum(pi_losses[-10:])/10}")
-				print(f"average episode reward: {sum(episode_reward)/len(episode_reward)}")
+				print(f"average reward per timestep: {sum(episode_reward)/len(episode_reward)}")
+				fig, axs = plt.subplots(2, 1)
+				axs[0].plot(np.arange(len(action_list)), action_list)
+				axs[1].plot(np.arange(len(episode_reward)), episode_reward)
+				plt.savefig(f"./rewards/report{epoch_num}.png")
+				time.sleep(5)
 		avg_ep_rewards.append(sum(episode_reward)/len(episode_reward))
 		recorder.save_rewards(episode_reward)
 	print("training complete; rendering video of policy from frames...")
 	fig, axs = plt.subplots(2, 2)
+
+	# X axis length may differ slightly since 64 samples must be collected before ddpg_update
 	axs[0][0].plot(np.arange(len(episode_reward)), episode_reward)
 	axs[0][1].plot(np.arange(len(avg_ep_rewards)),avg_ep_rewards)
 	axs[1][0].plot(np.arange(len(q_losses)), q_losses)

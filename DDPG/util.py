@@ -10,21 +10,16 @@ class ReplayBuffer:
 		self.buffer = []
 		self.position = 0
 
-	def push(self, state, action, reward, next_state):
+	def push(self, state, action, reward, next_state, done):
 		if len(self.buffer) < self.capacity:
 			self.buffer.append(None)
-		self.buffer[self.position] = (state, action, reward, next_state)
+		self.buffer[self.position] = (state, action, reward, next_state, done)
 		self.position = (self.position + 1) % self.capacity
 
 	def sample(self, batch_size):
 		batch = random.sample(self.buffer, batch_size)
-		#print(f"BATCH: {list(zip(*batch))}")
-		#print(f"BATCHlen: {len(list(zip(*batch)))}")
-		temp = zip(*batch)
-		# for elem in temp:
-		# 	print(np.asarray(elem).shape)
-		state, action, reward, next_state = map(np.stack, zip(*batch))
-		return state, action, reward, next_state
+		state, action, reward, next_state, done = map(np.stack, zip(*batch))
+		return state, action, reward, next_state, done
 
 	def __len__(self):
         	return len(self.buffer)
@@ -69,8 +64,8 @@ class OUNoise:
         self.min_sigma    = min_sigma
         self.decay_period = decay_period
         self.action_dim   = action_space.shape[0]
-        self.low          = action_space.minimum
-        self.high         = action_space.maximum
+        self.low          = action_space.low
+        self.high         = action_space.high
         self.reset()
 
     def reset(self):
